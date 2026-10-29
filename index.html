@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Table to Clipboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  .bm { display: inline-block; padding: .6rem 1.2rem; background: #0176d3; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600; cursor: grab; }
+  code { background: #f4f4f4; padding: 0 .3rem; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; font-size: .9rem; white-space: nowrap; }
+  th, td { border: 1px solid #ccc; padding: .3rem .6rem; text-align: left; }
+  th { background: #f4f4f4; }
+</style>
+</head>
+<body>
+<h1>Table to Clipboard</h1>
+<p>This bookmarklet copies the results table on the current page to your clipboard, ready to paste into Excel. You get just the values contained in the table (including headers) with none of the page formatting.</p>
+
+<h2>Install</h2>
+<p>Drag this button onto your browser's bookmarks bar:</p>
+<p><a class="bm" id="bm" href="#">Table to Clipboard</a></p>
+<p>Can't see the bookmarks bar? Press <code>Ctrl+Shift+B</code> (<code>Cmd+Shift+B</code> on Mac).</p>
+
+<h2>How to Use</h2>
+<ol>
+  <li>Open the webpage that shows a table.</li>
+  <li>Click <strong>Table to Clipboard</strong> in your bookmarks bar.</li>
+  <li>A message tells you how many records were copied.</li>
+  <li>Click a cell in Excel (desktop or Excel 365 online) and press <code>Ctrl+V</code>. Each value lands in its own column, with no import step.</li>
+</ol>
+<p>The data is copied as tab-separated text, which is what lets Excel split it into columns. Pasting into Notepad or an email gives plain text with tabs between the values.</p>
+<p><strong>Note:</strong> This tool will only copy the contents of the visible table on the page. If the data is split across multiple tables (e.g. a table split based on a row limit) then you can copy and paste each table views separately and merge them together in another tool like Excel.</p>
+<h2>What's copied</h2>
+<ul>
+  <li>The first row has the column names, one row per member after that.</li>
+  <li>Text columns (e.g. ID, Name, Address, etc) are copied as shown.</li>
+  <li>Any images and replaced with best guess at what that image represents. E.g. Tick and cross icons become <code>YES</code> and <code>NO</code>.</li>
+</ul>
+<p>Example, as it looks once pasted:</p>
+<div class="scroll"><table>
+  <tr><th>First Name</th><th>Last Name</th><th>Address</th></tr>
+  <tr><td>Jane</td><td>Smith</td><td>123 Fake Street</td></tr>
+</table></div>
+<p>If the page has no results table, you'll get a message saying so and nothing is copied. If it has more than one, only the first is copied.</p>
+
+<script>
+function resultsToClipboard() {
+  const find = root => {
+    const hit = root.querySelector('table[id^="custTable-"]');
+    if (hit) return hit;
+    for (const el of root.querySelectorAll('*')) {
+      const t = el.shadowRoot && find(el.shadowRoot);
+      if (t) return t;
+    }
+  };
+  const table = find(document);
+  if (!table) return alert('You must be viewing a page with a suitable table to be exported.');
+
+  const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+  // Cell contents sit inside component shadow roots that querySelector/textContent can't see,
+  // so walk shadowRoot + child nodes by hand. Skips the "Edit" button; icons give their alt text.
+  const collect = (node, out) => {
+    if (node.nodeType === 3) out.text.push(node.nodeValue);
+    if (node.nodeType !== 1 || node.tagName === 'BUTTON' || node.tagName === 'SLOT' || node.classList.contains('slds-assistive-text')) return out;
+    if (node.tagName === 'IMG') out.alt.push(node.alt);
+    if (node.shadowRoot) node.shadowRoot.childNodes.forEach(n => collect(n, out));
+    node.childNodes.forEach(n => collect(n, out));
+    return out;
+  };
+  const headers = [...table.querySelectorAll('thead th')].map(th => clean(th.getAttribute('aria-label') || th.textContent));
+  const rows = [...table.querySelectorAll('tbody tr')].map(tr =>
+    [...tr.querySelectorAll('td')].map(td => {
+      const { text, alt } = collect(td, { text: [], alt: [] });
+      // For icon cells drop the colour word from the alt text, then OK -> YES, CANCEL -> NO.
+      const icon = clean(alt.join(' ').replace(/\b(red|green|amber|yellow|orange|blue|grey|gray|black|white|purple)\b/gi, ''));
+      return clean(text.join(' ')) || ({ OK: 'YES', CANCEL: 'NO' })[icon.toUpperCase()] || icon;
+    })
+  );
+  // Tab-separated so it pastes straight into Excel columns. clean() already turned any tabs/newlines into spaces, so only quotes need escaping.
+  const esc = v => v.includes('"') ? `"${v.replace(/"/g, '""')}"` : v;
+  const tsv = [headers, ...rows].map(r => r.map(esc).join('\t')).join('\r\n');
+
+  const n = rows.length;
+  const done = ok => alert(ok
+    ? `Copied ${n} record${n === 1 ? '' : 's'} to the clipboard. Paste into Excel with Ctrl+V.`
+    : `Couldn't copy to the clipboard. Click on the page, then click the bookmark again.`);
+  // Fallback for pages/browsers where the async clipboard API is refused.
+  const legacyCopy = () => {
+    const ta = document.createElement('textarea');
+    ta.value = tsv;
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  };
+  (navigator.clipboard ? navigator.clipboard.writeText(tsv) : Promise.reject())
+    .then(() => done(true), () => done(legacyCopy()));
+}
+document.getElementById('bm').href = 'javascript:' + encodeURIComponent('(' + resultsToClipboard + ')()');
+</script>
+</body>
+</html>
